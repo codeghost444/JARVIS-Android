@@ -3,6 +3,10 @@ package com.jarvis.assistant
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import android.os.Build
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
@@ -32,12 +36,25 @@ class MainActivity : Activity() {
     @Volatile private var ttsReady = false
     private var pendingText: String? = null
     private var pendingRate = 1.0f
+    private var pageReady = false
+    private var pendingWakePhrase: String? = null
+
+    private val wakeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == JarvisWakeService.ACTION_WAKE) {
+                val phrase = intent.getStringExtra(JarvisWakeService.EXTRA_PHRASE).orEmpty()
+                runWakePhrase(phrase)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.rgb(2, 6, 13)
         window.navigationBarColor = Color.rgb(2, 6, 13)
         initializeTts()
+        val filter = IntentFilter(JarvisWakeService.ACTION_WAKE)
+        if (Build.VERSION.SDK_INT >= 33) { registerReceiver(wakeReceiver, filter, Context.RECEIVER_NOT_EXPORTED) } else { registerReceiver(wakeReceiver, filter) }
         webView = WebView(this).apply {
             setBackgroundColor(Color.rgb(2, 6, 13))
             settings.javaScriptEnabled = true
@@ -58,17 +75,72 @@ class MainActivity : Activity() {
                     return true
                 }
             }
-            webViewClient = object : WebViewClient() {
-                override fun onReceivedError(view: WebView, errorCode: Int, description: String, failingUrl: String) {
-                    Log.e("JARVIS-Web", "WebView error $errorCode: $description ($failingUrl)")
-                    if (failingUrl.startsWith("file:")) runOnUiThread { Toast.makeText(this@MainActivity, "Erro ao carregar a interface JARVIS", Toast.LENGTH_LONG).show() }
-                }
-            }
             addJavascriptInterface(NativeSpeechBridge(), "AndroidSpeech")
             addJavascriptInterface(NativeTtsBridge(), "AndroidTTS")
+            addJavascriptInterface(BackgroundBridge(), "AndroidBackground")
         }
         setContentView(webView)
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                pageReady = true
+                pendingWakePhrase?.let { runWakePhrase(it); pendingWakePhrase = null }
+            }
+            override fun onReceivedError(view: WebView, errorCode: Int, description: String, failingUrl: String) {
+                Log.e("JARVIS-Web", "WebView error $errorCode: $description ($failingUrl)")
+                if (failingUrl.startsWith("file:")) runOnUiThread { Toast.makeText(this@MainActivity, "Erro ao carregar a interface JARVIS", Toast.LENGTH_LONG).show() }
+            }
+        }
         webView.loadUrl("file:///android_asset/index.html")
+        handleWakeIntent(intent)
+    }
+
+    private inner class BackgroundBridge {
+        @JavascriptInterface fun start() {
+            runOnUiThread {
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    pendingListen = false
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 101)
+                    Toast.makeText(this@MainActivity, "Autorize o microfone e toque novamente em Ativar segundo plano", Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                try {
+                    val i = Intent(this@MainActivity, JarvisWakeService::class.java).setAction(JarvisWakeService.ACTION_START)
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+                    Toast.makeText(this@MainActivity, "JARVIS em segundo plano ativado", Toast.LENGTH_SHORT).show()
+                    sendToPage("window.jarvisBackgroundState(true)")
+                } catch (e: Exception) {
+                    Log.e("JARVIS", "Não foi possível iniciar serviço", e)
+                    Toast.makeText(this@MainActivity, "Não foi possível iniciar. Abra o app e tente novamente.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        @JavascriptInterface fun stop() {
+            runOnUiThread {
+                stopService(Intent(this@MainActivity, JarvisWakeService::class.java))
+                sendToPage("window.jarvisBackgroundState(false)")
+                Toast.makeText(this@MainActivity, "Escuta em segundo plano desativada", Toast.LENGTH_SHORT).show()
+            }
+        }
+        @JavascriptInterface fun isRunning(): Boolean = JarvisWakeService.isRunning
+    }
+
+    private fun handleWakeIntent(intent: Intent?) {
+        if (intent?.action == JarvisWakeService.ACTION_WAKE) {
+            runWakePhrase(intent.getStringExtra(JarvisWakeService.EXTRA_PHRASE).orEmpty())
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleWakeIntent(intent)
+    }
+
+    private fun runWakePhrase(phrase: String) {
+        if (!pageReady || !::webView.isInitialized) { pendingWakePhrase = phrase; return }
+        val quoted = JSONObject.quote(phrase)
+        sendToPage("window.jarvisWakeWord($quoted)")
     }
 
     private fun initializeTts() {
@@ -166,6 +238,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(wakeReceiver) } catch (_: Exception) {}
         try { speechRecognizer?.destroy() } catch (_: Exception) {}
         try { textToSpeech?.stop(); textToSpeech?.shutdown() } catch (_: Exception) {}
         if (::webView.isInitialized) webView.destroy()

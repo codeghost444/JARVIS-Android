@@ -17,3 +17,10 @@ Projeto Android com interface HUD futurista em HTML, conexão com o Worker Cloud
 
 ## Importante
 A chave da IA deve ficar como variável secreta no Worker Cloudflare; não coloque chave privada no HTML nem no GitHub. A fala depende do mecanismo TTS instalado e configurado no Android. O projeto não implementa escuta contínua com tela apagada nem serviço de voz em segundo plano. Este ZIP foi preparado e verificado estruturalmente, mas a compilação final deve ser confirmada pelo GitHub Actions e pelo teste no aparelho.
+
+
+## Escuta em segundo plano (palavra de ativação)
+
+A interface inclui o botão **Ativar segundo plano**. Toque nele enquanto o app está aberto e conceda acesso ao microfone. Uma notificação persistente indica que o serviço está ativo; diga **“Jarvis”** seguido do comando, por exemplo “Jarvis, que horas são?”. Toque na notificação para voltar à interface. Para desligar, volte ao app e toque em **Segundo plano: ON**.
+
+**Limitações importantes:** esta versão usa o serviço de reconhecimento de voz disponibilizado pelo Android para procurar a palavra “Jarvis”; não é um detector acústico local dedicado. A disponibilidade, latência, internet e comportamento com a tela bloqueada dependem do serviço de reconhecimento instalado e da versão do Android. O serviço mantém o microfone ativo, pode consumir bastante bateria e mostra notificação permanente. Alguns fabricantes podem encerrar serviços; se ocorrer, permita atividade em segundo plano/uso irrestrito de bateria para o app. A ativação por palavra não é garantida em todos os aparelhos, nem substitui o hotword oficial do sistema.
