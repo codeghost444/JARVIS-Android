@@ -10,6 +10,7 @@ import android.os.Build
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -122,6 +123,14 @@ class MainActivity : Activity() {
                 Toast.makeText(this@MainActivity, "Escuta em segundo plano desativada", Toast.LENGTH_SHORT).show()
             }
         }
+        @JavascriptInterface fun resume() {
+            try {
+                if (JarvisWakeService.isRunning) {
+                    val i = Intent(this@MainActivity, JarvisWakeService::class.java).setAction(JarvisWakeService.ACTION_RESUME)
+                    startService(i)
+                }
+            } catch (e: Exception) { Log.w("JARVIS", "Não foi possível retomar a escuta", e) }
+        }
         @JavascriptInterface fun isRunning(): Boolean = JarvisWakeService.isRunning
     }
 
@@ -144,7 +153,8 @@ class MainActivity : Activity() {
     }
 
     private fun initializeTts() {
-        textToSpeech = TextToSpeech(this) { status ->
+        // Use the Android system's configured TTS engine (for example, HayaiTTS).
+        val onInit = TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val tts = textToSpeech
                 val lang = tts?.setLanguage(Locale.forLanguageTag("pt-BR"))
@@ -162,6 +172,8 @@ class MainActivity : Activity() {
                 sendToPage("window.jarvisNativeTtsState('error')")
             }
         }
+        val defaultEngine = Settings.Secure.getString(contentResolver, Settings.Secure.TTS_DEFAULT_SYNTH)
+        textToSpeech = if (!defaultEngine.isNullOrBlank()) TextToSpeech(this, onInit, defaultEngine) else TextToSpeech(this, onInit)
     }
 
     private inner class NativeTtsBridge {
