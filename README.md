@@ -47,3 +47,10 @@ A interface consulta fontes online quando identifica perguntas que pedem notíci
 - “Jarvis, abra [nome de um aplicativo instalado]”
 
 O serviço de palavra de ativação permanece ativo durante respostas para tentar permitir interrupção dizendo “Jarvis”. O comportamento depende do serviço de reconhecimento de voz do Android e pode variar conforme o aparelho.
+
+
+## Ajuste de áudio e palavra de ativação (28/10/2026)
+- O serviço pausa a escuta enquanto o JARVIS processa e fala, evitando capturar a própria voz e reiniciar o microfone em ciclo.
+- A escuta de espera usa janelas maiores e tenta reconhecimento offline quando o serviço Android oferece suporte.
+- O app tenta silenciar por menos de um segundo o canal de sons do sistema durante o início do reconhecimento e restaura o volume anterior. Alguns serviços de voz podem ignorar esse recurso; o comportamento depende do Android e do mecanismo de reconhecimento instalado.
+- Os arquivos usados na compilação Gradle foram sincronizados com os arquivos principais do projeto.

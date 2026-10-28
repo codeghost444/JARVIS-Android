@@ -1,0 +1,2 @@
+Copie o seu HTML completo para esta pasta e renomeie o arquivo para index.html.
+O MainActivity carrega file:///android_asset/index.html.

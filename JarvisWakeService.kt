@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -40,6 +41,8 @@ class JarvisWakeService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var restartPending = false
     private var lastWakeAt = 0L
+    private var originalSystemVolume: Int? = null
+    private val restoreSystemVolume = Runnable { restoreRecognitionCueVolume() }
 
     override fun onCreate() { super.onCreate(); createChannel() }
 
@@ -149,12 +152,14 @@ class JarvisWakeService : Service() {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "pt-BR")
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingCommand) 18000L else 25000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingCommand) 9000L else 12000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingCommand) 18000L else 60000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingCommand) 9000L else 30000L)
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 700L)
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
             }
             listening = true
+            suppressRecognitionCueBriefly()
             recognizer?.startListening(speechIntent)
         } catch (e: Exception) {
             listening = false
@@ -165,8 +170,15 @@ class JarvisWakeService : Service() {
     }
 
     private fun dispatchCommand(command: String) {
-        // Keep the wake-word service alive during replies so the user can say “Jarvis” to interrupt.
-        pausedForReply = false
+        // Pause microphone capture while JARVIS processes/speaks, preventing it from
+        // hearing its own voice and repeatedly restarting the recognizer.
+        pausedForReply = command.isNotBlank()
+        if (pausedForReply) {
+            restartPending = false
+            handler.removeCallbacksAndMessages(null)
+            try { recognizer?.cancel() } catch (_: Exception) {}
+            listening = false
+        }
         awaitingCommand = false
         val wake = Intent(ACTION_WAKE).setPackage(packageName).putExtra(EXTRA_PHRASE, command)
         sendBroadcast(wake)
@@ -207,6 +219,46 @@ class JarvisWakeService : Service() {
         return edits <= 1
     }
 
+    /**
+     * Android/Google speech services may play a short cue whenever recognition starts.
+     * Temporarily mute only the system-sound stream, then restore its previous level.
+     * Some recognition engines ignore this workaround; the app never permanently changes volume.
+     */
+    private fun suppressRecognitionCueBriefly() {
+        try {
+            val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+            if (originalSystemVolume == null) {
+                val current = audio.getStreamVolume(AudioManager.STREAM_SYSTEM)
+                if (current > 0) {
+                    originalSystemVolume = current
+                    audio.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0)
+                }
+            }
+            handler.removeCallbacks(restoreSystemVolume)
+            handler.postDelayed(restoreSystemVolume, 900L)
+        } catch (e: Exception) {
+            Log.d("JARVIS-Wake", "Recognition cue mute unavailable", e)
+        }
+    }
+
+    private fun restoreRecognitionCueVolume() {
+        val original = originalSystemVolume ?: return
+        originalSystemVolume = null
+        try {
+            val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+            // Restore only if it is still muted, so a user volume change is not overwritten.
+            if (audio.getStreamVolume(AudioManager.STREAM_SYSTEM) == 0) {
+                audio.setStreamVolume(
+                    AudioManager.STREAM_SYSTEM,
+                    original.coerceAtMost(audio.getStreamMaxVolume(AudioManager.STREAM_SYSTEM)),
+                    0
+                )
+            }
+        } catch (e: Exception) {
+            Log.d("JARVIS-Wake", "Could not restore system sound volume", e)
+        }
+    }
+
     private fun scheduleRestart(delay: Long) {
         if (!isRunning || pausedForReply || restartPending) return
         restartPending = true
@@ -216,6 +268,7 @@ class JarvisWakeService : Service() {
     override fun onDestroy() {
         isRunning = false
         handler.removeCallbacksAndMessages(null)
+        restoreRecognitionCueVolume()
         try { recognizer?.cancel(); recognizer?.destroy() } catch (_: Exception) {}
         recognizer = null
         try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
