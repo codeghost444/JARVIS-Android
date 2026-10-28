@@ -49,7 +49,7 @@ class JarvisWakeService : Service() {
             ACTION_RESUME -> {
                 pausedForReply = false
                 awaitingCommand = false
-                scheduleRestart(900)
+                scheduleRestart(300)
             }
             else -> {
                 try {
@@ -89,64 +89,68 @@ class JarvisWakeService : Service() {
 
     private fun startRecognition() {
         if (!isRunning || pausedForReply || listening || restartPending) return
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) { scheduleRestart(5000); return }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) { scheduleRestart(4000); return }
         try {
-            try { recognizer?.destroy() } catch (_: Exception) {}
-            recognizer = SpeechRecognizer.createSpeechRecognizer(this)
-            recognizer?.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: android.os.Bundle?) { listening = true }
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() { listening = false }
-                override fun onError(error: Int) {
-                    listening = false
-                    val delay = when (error) {
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 2500L
-                        SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> 5000L
-                        SpeechRecognizer.ERROR_CLIENT -> 1800L
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT, SpeechRecognizer.ERROR_NO_MATCH -> 700L
-                        else -> 1400L
+            // Reuse one SpeechRecognizer instance. Destroying and recreating it after every
+            // phrase caused repeated audio-focus/microphone hand-offs on many Android phones.
+            if (recognizer == null) {
+                recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+                recognizer?.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: android.os.Bundle?) { listening = true }
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() { listening = false }
+                    override fun onError(error: Int) {
+                        listening = false
+                        val delay = when (error) {
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 900L
+                            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> 2200L
+                            SpeechRecognizer.ERROR_CLIENT -> 650L
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT, SpeechRecognizer.ERROR_NO_MATCH -> 300L
+                            else -> 450L
+                        }
+                        scheduleRestart(delay)
                     }
-                    scheduleRestart(delay)
-                }
-                override fun onResults(results: android.os.Bundle?) {
-                    listening = false
-                    val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-                    Log.d("JARVIS-Wake", "Heard: $heard; awaitingCommand=$awaitingCommand")
-                    if (awaitingCommand) {
-                        awaitingCommand = false
-                        if (heard.isNotBlank()) dispatchCommand(heard.trim()) else scheduleRestart(600)
-                        return
+                    override fun onResults(results: android.os.Bundle?) {
+                        listening = false
+                        val alternatives = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+                        val heard = if (awaitingCommand) alternatives.firstOrNull().orEmpty() else
+                            alternatives.firstOrNull { findWakeWord(it) != null } ?: alternatives.firstOrNull().orEmpty()
+                        Log.d("JARVIS-Wake", "Heard: $heard; alternatives=$alternatives; awaitingCommand=$awaitingCommand")
+                        if (awaitingCommand) {
+                            awaitingCommand = false
+                            if (heard.isNotBlank()) dispatchCommand(heard.trim()) else scheduleRestart(300)
+                            return
+                        }
+                        val wakeRange = findWakeWord(heard)
+                        if (wakeRange != null) {
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastWakeAt > 1800L) {
+                                lastWakeAt = now
+                                val command = heard.substring((wakeRange.last + 1).coerceAtMost(heard.length))
+                                    .trim(' ', ',', '.', '!', '?', ':', ';', '-', '—')
+                                if (command.isNotBlank()) dispatchCommand(command)
+                                else {
+                                    dispatchCommand("")
+                                    awaitingCommand = true
+                                    scheduleRestart(300)
+                                }
+                            } else scheduleRestart(300)
+                        } else scheduleRestart(300)
                     }
-                    val wakeRange = findWakeWord(heard)
-                    if (wakeRange != null) {
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastWakeAt > 1800L) {
-                            lastWakeAt = now
-                            // Keep the range against the original transcript so accents/punctuation don't shift the command.
-                            val command = heard.substring((wakeRange.last + 1).coerceAtMost(heard.length))
-                                .trim(' ', ',', '.', '!', '?', ':', ';', '-', '—')
-                            if (command.isNotBlank()) dispatchCommand(command)
-                            else {
-                                dispatchCommand("")
-                                awaitingCommand = true
-                                scheduleRestart(700)
-                            }
-                        } else scheduleRestart(900)
-                    } else scheduleRestart(900)
-                }
-                override fun onPartialResults(partialResults: android.os.Bundle?) {}
-                override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
-            })
+                    override fun onPartialResults(partialResults: android.os.Bundle?) {}
+                    override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+                })
+            }
             val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "pt-BR")
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingCommand) 3500L else 2200L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1700L)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingCommand) 18000L else 25000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, if (awaitingCommand) 9000L else 12000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 700L)
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
             }
@@ -155,7 +159,8 @@ class JarvisWakeService : Service() {
         } catch (e: Exception) {
             listening = false
             Log.e("JARVIS-Wake", "Recognition start failed", e)
-            scheduleRestart(1800)
+            try { recognizer?.cancel() } catch (_: Exception) {}
+            scheduleRestart(700)
         }
     }
 
@@ -165,7 +170,7 @@ class JarvisWakeService : Service() {
         awaitingCommand = false
         val wake = Intent(ACTION_WAKE).setPackage(packageName).putExtra(EXTRA_PHRASE, command)
         sendBroadcast(wake)
-        scheduleRestart(1100)
+        scheduleRestart(300)
     }
 
     private fun normalize(value: String): String = java.text.Normalizer
