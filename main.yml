@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - master
 
 permissions:
   contents: read
@@ -12,7 +13,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Baixar codigo
         uses: actions/checkout@v4
@@ -27,11 +27,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Compilar APK
-        run: gradle --no-daemon assembleDebug
+        run: gradle --no-daemon clean assembleDebug
 
       - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
           name: JARVIS-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
