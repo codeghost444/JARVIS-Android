@@ -23,7 +23,7 @@ A chave da IA deve ficar como variável secreta no Worker Cloudflare; não coloq
 
 A interface inclui o botão **Ativar segundo plano**. Toque nele enquanto o app está aberto e conceda acesso ao microfone. Uma notificação persistente indica que o serviço está ativo; diga **“Jarvis”** seguido do comando, por exemplo “Jarvis, que horas são?”. Toque na notificação para voltar à interface. Para desligar, volte ao app e toque em **Segundo plano: ON**.
 
-**Limitações importantes:** esta versão usa o serviço de reconhecimento de voz disponibilizado pelo Android para procurar a palavra “Jarvis”; não é um detector acústico local dedicado. A disponibilidade, latência, internet e comportamento com a tela bloqueada dependem do serviço de reconhecimento instalado e da versão do Android. O serviço mantém o microfone ativo, pode consumir bastante bateria e mostra notificação permanente. Alguns fabricantes podem encerrar serviços; se ocorrer, permita atividade em segundo plano/uso irrestrito de bateria para o app. A ativação por palavra não é garantida em todos os aparelhos, nem substitui o hotword oficial do sistema.
+**Limitações importantes:** esta versão usa o serviço de reconhecimento de voz disponibilizado pelo Android para procurar variações reconhecidas por voz como “Jarvis”, “Járvis”, “Jarves”, “Jervis” e “Jarvys”; não é um detector acústico local dedicado. A tolerância a variações depende do texto que o serviço de voz do Android devolver. A disponibilidade, latência, internet e comportamento com a tela bloqueada dependem do serviço de reconhecimento instalado e da versão do Android. O serviço mantém o microfone ativo, pode consumir bastante bateria e mostra notificação permanente. Alguns fabricantes podem encerrar serviços; se ocorrer, permita atividade em segundo plano/uso irrestrito de bateria para o app. A ativação por palavra não é garantida em todos os aparelhos, nem substitui o hotword oficial do sistema.
 
 
 ## Ajustes desta versão (escuta e voz)
@@ -33,3 +33,17 @@ A interface inclui o botão **Ativar segundo plano**. Toque nele enquanto o app 
 - A síntese de voz usa explicitamente o mecanismo TTS padrão configurado no Android (por exemplo, HayaiTTS), com fallback de voz do navegador se o mecanismo nativo reportar erro.
 
 **Limitações Android:** a detecção é baseada no serviço de reconhecimento de voz do aparelho, não em um detector local dedicado. Pode depender de internet, idioma instalado, bateria e regras do fabricante; por isso não é possível garantir reconhecimento contínuo em todo aparelho ou com a tela bloqueada.
+
+
+## Internet e atualidade
+
+A interface consulta fontes online quando identifica perguntas que pedem notícias, informações atuais, clima, data/hora e cotações. Notícias recentes usam Google Notícias via RSS; consultas enciclopédicas usam a Wikipédia; clima usa Open-Meteo e cotações usam AwesomeAPI. Essas consultas precisam de conexão com a internet e podem falhar se os serviços externos estiverem indisponíveis. A IA continua sendo chamada pelo Cloudflare Worker configurado em `index.html`.
+
+
+## Novos comandos de voz
+- “Jarvis, abra o YouTube”
+- “Jarvis, abre o WhatsApp”
+- “Jarvis, abrir o bloco de notas”
+- “Jarvis, abra [nome de um aplicativo instalado]”
+
+O serviço de palavra de ativação permanece ativo durante respostas para tentar permitir interrupção dizendo “Jarvis”. O comportamento depende do serviço de reconhecimento de voz do Android e pode variar conforme o aparelho.
